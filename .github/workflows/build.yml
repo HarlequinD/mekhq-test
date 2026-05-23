@@ -1,96 +1,278 @@
-name: Build MekHQ
+name: Build MekHQ fork
 
 on:
   workflow_dispatch:
     inputs:
-      megamek_ref:
-        description: "MegaMek branch or tag"
+      java_version:
+        description: JDK version to use
         required: true
-        default: "main"
-      megameklab_ref:
-        description: "MegaMekLab branch or tag"
+        default: '21'
+        type: choice
+        options:
+          - '21'
+          - '25'
+
+      include_mm_data:
+        description: Checkout mm-data
         required: true
-        default: "main"
+        default: true
+        type: boolean
+
+      include_megamek:
+        description: Checkout MegaMek
+        required: true
+        default: true
+        type: boolean
+
+      include_megameklab:
+        description: Checkout MegaMekLab
+        required: true
+        default: true
+        type: boolean
+
+      mm_data_repo:
+        description: mm-data repository
+        required: true
+        default: 'megamek/mm-data'
+        type: string
+
       mm_data_ref:
-        description: "mm-data branch or tag"
+        description: mm-data ref
+        required: false
+        default: 'main'
+        type: string
+
+      megamek_repo:
+        description: MegaMek repository
         required: true
-        default: "main"
+        default: 'MegaMek/megamek'
+        type: string
+
+      megamek_ref:
+        description: MegaMek ref. Leave blank to try the current branch name first, then fall back.
+        required: false
+        default: ''
+        type: string
+
+      megameklab_repo:
+        description: MegaMekLab repository
+        required: true
+        default: 'MegaMek/megameklab'
+        type: string
+
+      megameklab_ref:
+        description: MegaMekLab ref. Leave blank to try the current branch name first, then fall back.
+        required: false
+        default: ''
+        type: string
+
+      extra_version_prefix:
+        description: Prefix for -PextraVersion
+        required: true
+        default: 'local'
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  GRADLE_OPTS: "-Dscan.link.VCS=https://github.com/${{ github.repository }}/commit/${{ github.sha }}"
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout MekHQ
+      - name: Checkout MekHQ fork
         uses: actions/checkout@v6
         with:
           path: mekhq
 
+      - name: Resolve optional dependency repositories
+        id: resolve
+        shell: bash
+        env:
+          INPUT_MM_DATA: ${{ inputs.include_mm_data }}
+          INPUT_MEGAMEK: ${{ inputs.include_megamek }}
+          INPUT_MEGAMEKLAB: ${{ inputs.include_megameklab }}
+          MM_DATA_REPO: ${{ inputs.mm_data_repo }}
+          MM_DATA_REF: ${{ inputs.mm_data_ref }}
+          MEGAMEK_REPO: ${{ inputs.megamek_repo }}
+          MEGAMEK_REF: ${{ inputs.megamek_ref }}
+          MEGAMEKLAB_REPO: ${{ inputs.megameklab_repo }}
+          MEGAMEKLAB_REF: ${{ inputs.megameklab_ref }}
+        run: |
+          set -euo pipefail
+
+          current_ref="${GITHUB_REF_NAME:-}"
+
+          repo_url() {
+            printf 'https://github.com/%s.git' "$1"
+          }
+
+          has_ref() {
+            local repo="$1"
+            local ref="$2"
+            [[ -n "$ref" ]] || return 1
+            git ls-remote --exit-code --heads "$(repo_url "$repo")" "$ref" >/dev/null 2>&1 \
+              || git ls-remote --exit-code --tags "$(repo_url "$repo")" "$ref" >/dev/null 2>&1
+          }
+
+          repo_reachable() {
+            local repo="$1"
+            git ls-remote --exit-code "$(repo_url "$repo")" HEAD >/dev/null 2>&1
+          }
+
+          resolve_dep() {
+            local enabled="$1"
+            local repo="$2"
+            local requested_ref="$3"
+            local fallback_ref="$4"
+            local label="$5"
+            local key="$6"
+
+            if [[ "$enabled" != "true" ]]; then
+              echo "${key}_enabled=false" >> "$GITHUB_OUTPUT"
+              echo "${key}_repo=" >> "$GITHUB_OUTPUT"
+              echo "${key}_ref=" >> "$GITHUB_OUTPUT"
+              return
+            fi
+
+            if ! repo_reachable "$repo"; then
+              echo "::warning::${label} repository '${repo}' is not reachable. Skipping checkout."
+              echo "${key}_enabled=false" >> "$GITHUB_OUTPUT"
+              echo "${key}_repo=" >> "$GITHUB_OUTPUT"
+              echo "${key}_ref=" >> "$GITHUB_OUTPUT"
+              return
+            fi
+
+            local chosen_ref=""
+
+            if has_ref "$repo" "$requested_ref"; then
+              chosen_ref="$requested_ref"
+            elif [[ -z "$requested_ref" ]] && has_ref "$repo" "$current_ref"; then
+              chosen_ref="$current_ref"
+            elif has_ref "$repo" "$fallback_ref"; then
+              chosen_ref="$fallback_ref"
+              if [[ -n "$requested_ref" ]]; then
+                echo "::warning::${label} ref '${requested_ref}' not found in ${repo}; using '${fallback_ref}'."
+              elif [[ -n "$current_ref" ]]; then
+                echo "::notice::${label} branch '${current_ref}' not found in ${repo}; using '${fallback_ref}'."
+              fi
+            else
+              echo "::notice::${label} is reachable, but requested/current/fallback refs were not found. Checkout will use the repo default branch."
+            fi
+
+            echo "${key}_enabled=true" >> "$GITHUB_OUTPUT"
+            echo "${key}_repo=${repo}" >> "$GITHUB_OUTPUT"
+            echo "${key}_ref=${chosen_ref}" >> "$GITHUB_OUTPUT"
+          }
+
+          resolve_dep "$INPUT_MM_DATA" "$MM_DATA_REPO" "$MM_DATA_REF" "main" "mm-data" "mm_data"
+          resolve_dep "$INPUT_MEGAMEK" "$MEGAMEK_REPO" "$MEGAMEK_REF" "main" "MegaMek" "megamek"
+          resolve_dep "$INPUT_MEGAMEKLAB" "$MEGAMEKLAB_REPO" "$MEGAMEKLAB_REF" "main" "MegaMekLab" "megameklab"
+
       - name: Checkout mm-data
+        if: ${{ steps.resolve.outputs.mm_data_enabled == 'true' }}
         uses: actions/checkout@v6
         with:
-          repository: megamek/mm-data
-          ref: ${{ inputs.mm_data_ref }}
+          repository: ${{ steps.resolve.outputs.mm_data_repo }}
+          ref: ${{ steps.resolve.outputs.mm_data_ref }}
           path: mm-data
 
       - name: Checkout MegaMek
+        if: ${{ steps.resolve.outputs.megamek_enabled == 'true' }}
         uses: actions/checkout@v6
         with:
-          repository: MegaMek/megamek
-          ref: ${{ inputs.megamek_ref }}
+          repository: ${{ steps.resolve.outputs.megamek_repo }}
+          ref: ${{ steps.resolve.outputs.megamek_ref }}
           path: megamek
 
       - name: Checkout MegaMekLab
+        if: ${{ steps.resolve.outputs.megameklab_enabled == 'true' }}
         uses: actions/checkout@v6
         with:
-          repository: MegaMek/megameklab
-          ref: ${{ inputs.megameklab_ref }}
+          repository: ${{ steps.resolve.outputs.megameklab_repo }}
+          ref: ${{ steps.resolve.outputs.megameklab_ref }}
           path: megameklab
 
-      - name: Stamp revision files
-        shell: bash
-        run: |
-          cd megamek
-          git rev-parse HEAD > docs/mm-revision.txt
-          cd ../megameklab
-          git rev-parse HEAD > docs/mml-revision.txt
-          printf '%s\n' "${{ github.sha }}" > ../mekhq/MekHQ/mhq-revision.txt
-
-      - name: Setup Java
+      - name: Set up Temurin JDK
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: 21
+          java-version: ${{ inputs.java_version }}
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
 
-      - name: Build MekHQ
-        working-directory: mekhq
-        run: ./gradlew :MekHQ:build -x test --stacktrace
-
-      - name: Collect outputs
+      - name: Set short commit SHA
         shell: bash
         run: |
-          mkdir -p artifact-bundle
-          find mekhq/MekHQ/build -type f \( \
-            -name '*.jar' -o \
-            -name '*.exe' -o \
-            -name '*.zip' -o \
-            -name '*.tar' -o \
-            -name '*.tar.gz' \
-          \) -print
-          find mekhq/MekHQ/build -type f \( \
-            -name '*.jar' -o \
-            -name '*.exe' -o \
-            -name '*.zip' -o \
-            -name '*.tar' -o \
-            -name '*.tar.gz' \
-          \) -exec cp --parents {} artifact-bundle/ \;
+          set -euo pipefail
+          echo "COMMIT_SHORT_SHA=$(git -C mekhq rev-parse --short "${GITHUB_SHA}")" >> "$GITHUB_ENV"
 
-      - name: Upload outputs
+      - name: Stamp revision files and version metadata
+        shell: bash
+        env:
+          EXTRA_VERSION_PREFIX: ${{ inputs.extra_version_prefix }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p "mekhq/MekHQ"
+          printf '%s\n' "${GITHUB_SHA}" > "mekhq/MekHQ/mhq-revision.txt"
+
+          if [ -d "megamek" ]; then
+            mm_sha="$(git -C megamek rev-parse HEAD)"
+            mkdir -p "megamek/megamek/docs" "megamek/megamek/resources"
+            printf '%s\n' "${mm_sha}" > "megamek/megamek/docs/mm-revision.txt"
+            {
+              printf 'branch=%s\n' "${EXTRA_VERSION_PREFIX}"
+              printf 'gitHash=%s\n' "${COMMIT_SHORT_SHA}"
+            } > "megamek/megamek/resources/extraVersion.properties"
+          else
+            echo "::notice::MegaMek checkout not present; skipping mm-revision.txt and extraVersion.properties."
+          fi
+
+          if [ -d "megameklab" ]; then
+            mml_sha="$(git -C megameklab rev-parse HEAD)"
+            mkdir -p "megameklab/megameklab/docs"
+            printf '%s\n' "${mml_sha}" > "megameklab/megameklab/docs/mml-revision.txt"
+          else
+            echo "::notice::MegaMekLab checkout not present; skipping mml-revision.txt."
+          fi
+
+      - name: Build MekHQ
+        working-directory: mekhq
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew build -x test --stacktrace -PextraVersion="${{ inputs.extra_version_prefix }}-${COMMIT_SHORT_SHA}"
+
+      - name: Show produced artifacts
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          find "mekhq/MekHQ/build" -type f \( -name '*.jar' -o -name '*.exe' -o -name '*.zip' -o -name '*.tar.gz' \) | sort
+
+      - name: Upload build reports on failure
+        if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: mekhq-build
-          path: artifact-bundle/**
-          if-no-files-found: error
+          name: mekhq-build-reports-${{ env.COMMIT_SHORT_SHA }}
+          if-no-files-found: warn
+          path: |
+            mekhq/MekHQ/build/reports/**
+            mekhq/build/reports/**
+
+      - name: Upload jar, exe and distributions
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mekhq-build-${{ env.COMMIT_SHORT_SHA }}-jdk${{ inputs.java_version }}
+          if-no-files-found: warn
+          path: |
+            mekhq/MekHQ/build/libs/*.jar
+            mekhq/MekHQ/build/**/*.exe
+            mekhq/MekHQ/build/distributions/*.zip
+            mekhq/MekHQ/build/distributions/*.tar.gz
