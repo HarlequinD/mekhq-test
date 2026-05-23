@@ -1,0 +1,51 @@
+name: Build MekHQ
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout mm-data
+        uses: actions/checkout@v6
+        with:
+          repository: megamek/mm-data
+          path: mm-data
+
+      - name: Checkout MekHQ
+        uses: actions/checkout@v6
+        with:
+          path: mekhq
+
+      - name: Checkout MegaMek
+        uses: actions/checkout@v6
+        with:
+          repository: MegaMek/megamek
+          path: megamek
+
+      - name: Checkout MegaMekLab
+        uses: actions/checkout@v6
+        with:
+          repository: MegaMek/megameklab
+          path: megameklab
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Build
+        working-directory: mekhq
+        run: ./gradlew build -x test
+
+      - name: Upload build
+        uses: actions/upload-artifact@v7
+        with:
+          name: mekhq-build
+          path: mekhq/MekHQ/build/distributions/*
