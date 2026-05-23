@@ -1,0 +1,119 @@
+name: Build MekHQ fork
+
+on:
+  workflow_dispatch:
+    inputs:
+      java_version:
+        description: JDK version
+        required: true
+        default: '21'
+        type: choice
+        options:
+          - '21'
+          - '25'
+
+      extra_version:
+        description: Build version suffix
+        required: true
+        default: 'local'
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  GRADLE_OPTS: "-Dscan.link.VCS=https://github.com/${{ github.repository }}/commit/${{ github.sha }}"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout mm-data
+        uses: actions/checkout@v6
+        with:
+          repository: megamek/mm-data
+          path: mm-data
+
+      - name: Checkout MekHQ fork
+        uses: actions/checkout@v6
+        with:
+          path: mekhq
+
+      - name: Checkout MegaMek
+        uses: actions/checkout@v6
+        with:
+          repository: MegaMek/megamek
+          path: megamek
+
+      - name: Checkout MegaMekLab
+        uses: actions/checkout@v6
+        with:
+          repository: MegaMek/megameklab
+          path: megameklab
+
+      - name: Set up Temurin JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java_version }}
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Stamp revision files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git -C megamek rev-parse HEAD > megamek/megamek/docs/mm-revision.txt
+          git -C megameklab rev-parse HEAD > megameklab/megameklab/docs/mml-revision.txt
+          printf '%s\n' "${GITHUB_SHA}" > mekhq/MekHQ/mhq-revision.txt
+
+          COMMIT_SHORT_SHA="$(git -C mekhq rev-parse --short "${GITHUB_SHA}")"
+          echo "COMMIT_SHORT_SHA=${COMMIT_SHORT_SHA}" >> "${GITHUB_ENV}"
+
+          {
+            echo "branch=${{ inputs.extra_version }}"
+            echo "gitHash=${COMMIT_SHORT_SHA}"
+          } > megamek/megamek/resources/extraVersion.properties
+
+      - name: Build MekHQ
+        working-directory: mekhq
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew build -x test --stacktrace -PextraVersion="${{ inputs.extra_version }}-${COMMIT_SHORT_SHA}"
+
+      - name: Show produced artifacts
+        if: always()
+        shell: bash
+        run: |
+          find mekhq/MekHQ/build -type f \( \
+            -name '*.jar' -o \
+            -name '*.exe' -o \
+            -name '*.zip' -o \
+            -name '*.tar.gz' \
+          \) | sort || true
+
+      - name: Upload build reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mekhq-build-reports
+          if-no-files-found: warn
+          path: |
+            mekhq/MekHQ/build/reports/**
+            mekhq/build/reports/**
+
+      - name: Upload MekHQ build
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mekhq-build-jdk${{ inputs.java_version }}
+          if-no-files-found: warn
+          path: |
+            mekhq/MekHQ/build/libs/*.jar
+            mekhq/MekHQ/build/**/*.exe
+            mekhq/MekHQ/build/distributions/*.zip
+            mekhq/MekHQ/build/distributions/*.tar.gz
