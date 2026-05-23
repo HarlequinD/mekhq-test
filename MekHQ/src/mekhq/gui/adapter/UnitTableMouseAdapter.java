@@ -799,8 +799,9 @@ public class UnitTableMouseAdapter extends JPopupMenuAdapter {
                   .append("### Loadout\n");
 
             for (int loc = 0; loc < mek.locations(); loc++) {
+                final int location = loc;
                 String equipment = mek.getEquipment().stream()
-                                     .filter(m -> m.getLocation() == loc)
+                                     .filter(m -> m.getLocation() == location)
                                      .map(this::getMountedName)
                                      .collect(Collectors.joining(", "));
                 if (equipment.isBlank()) {
