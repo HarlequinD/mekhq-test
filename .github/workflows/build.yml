@@ -1,0 +1,96 @@
+name: Build MekHQ
+
+on:
+  workflow_dispatch:
+    inputs:
+      megamek_ref:
+        description: "MegaMek branch or tag"
+        required: true
+        default: "main"
+      megameklab_ref:
+        description: "MegaMekLab branch or tag"
+        required: true
+        default: "main"
+      mm_data_ref:
+        description: "mm-data branch or tag"
+        required: true
+        default: "main"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout MekHQ
+        uses: actions/checkout@v6
+        with:
+          path: mekhq
+
+      - name: Checkout mm-data
+        uses: actions/checkout@v6
+        with:
+          repository: megamek/mm-data
+          ref: ${{ inputs.mm_data_ref }}
+          path: mm-data
+
+      - name: Checkout MegaMek
+        uses: actions/checkout@v6
+        with:
+          repository: MegaMek/megamek
+          ref: ${{ inputs.megamek_ref }}
+          path: megamek
+
+      - name: Checkout MegaMekLab
+        uses: actions/checkout@v6
+        with:
+          repository: MegaMek/megameklab
+          ref: ${{ inputs.megameklab_ref }}
+          path: megameklab
+
+      - name: Stamp revision files
+        shell: bash
+        run: |
+          cd megamek
+          git rev-parse HEAD > docs/mm-revision.txt
+          cd ../megameklab
+          git rev-parse HEAD > docs/mml-revision.txt
+          printf '%s\n' "${{ github.sha }}" > ../mekhq/MekHQ/mhq-revision.txt
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Build MekHQ
+        working-directory: mekhq
+        run: ./gradlew :MekHQ:build -x test --stacktrace
+
+      - name: Collect outputs
+        shell: bash
+        run: |
+          mkdir -p artifact-bundle
+          find mekhq/MekHQ/build -type f \( \
+            -name '*.jar' -o \
+            -name '*.exe' -o \
+            -name '*.zip' -o \
+            -name '*.tar' -o \
+            -name '*.tar.gz' \
+          \) -print
+          find mekhq/MekHQ/build -type f \( \
+            -name '*.jar' -o \
+            -name '*.exe' -o \
+            -name '*.zip' -o \
+            -name '*.tar' -o \
+            -name '*.tar.gz' \
+          \) -exec cp --parents {} artifact-bundle/ \;
+
+      - name: Upload outputs
+        uses: actions/upload-artifact@v7
+        with:
+          name: mekhq-build
+          path: artifact-bundle/**
+          if-no-files-found: error
