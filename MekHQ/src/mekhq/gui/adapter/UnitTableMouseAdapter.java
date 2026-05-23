@@ -47,6 +47,8 @@ import static mekhq.utilities.MHQInternationalization.getFormattedTextAt;
 
 import java.awt.event.ActionEvent;
 import java.awt.event.MouseEvent;
+import java.awt.datatransfer.StringSelection;
+import java.awt.Toolkit;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.OutputStream;
@@ -58,6 +60,7 @@ import java.util.ResourceBundle;
 import java.util.UUID;
 import java.util.Vector;
 import java.util.stream.Stream;
+import java.util.stream.Collectors;
 import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JMenu;
 import javax.swing.JMenuItem;
@@ -73,7 +76,9 @@ import megamek.codeUtilities.MathUtility;
 import megamek.common.annotations.Nullable;
 import megamek.common.enums.SkillLevel;
 import megamek.common.equipment.AmmoType;
+import megamek.common.equipment.MiscType;
 import megamek.common.equipment.GunEmplacement;
+import megamek.common.equipment.EquipmentType;
 import megamek.common.icons.Camouflage;
 import megamek.common.loaders.BLKFile;
 import megamek.common.loaders.EntityLoadingException;
@@ -89,6 +94,7 @@ import megamek.common.units.Infantry;
 import megamek.common.units.Mek;
 import megamek.common.units.ProtoMek;
 import megamek.common.units.Tank;
+import megamek.common.equipment.Mounted;
 import megamek.common.weapons.infantry.InfantryWeapon;
 import megamek.logging.MMLogger;
 import mekhq.MHQConstants;
@@ -194,6 +200,7 @@ public class UnitTableMouseAdapter extends JPopupMenuAdapter {
     public static final String COMMAND_FLUFF_NAME = "FLUFF_NAME";
     public static final String COMMAND_CHANGE_MAINTENANCE_MULTI = "CHANGE_MAINTENANCE_MULTI";
     public static final String COMMAND_PERFORM_AD_HOC_MAINTENANCE = "PERFORM_AD_HOC_MAINTENANCE";
+    public static final String COMMAND_COPY_MEKS_MARKDOWN = "COPY_MEKS_MARKDOWN";
     // endregion Standard Commands
 
     // region GM Commands
@@ -744,7 +751,75 @@ public class UnitTableMouseAdapter extends JPopupMenuAdapter {
 
                 Maintenance.performImmediateMaintenance(campaign, unit);
             }
+        } else if (command.equals(COMMAND_COPY_MEKS_MARKDOWN)) {
+            String markdown = getMekMarkdown(units);
+            Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(markdown), null);
         }
+    }
+
+    private String getMekMarkdown(Unit[] units) {
+        StringBuilder markdown = new StringBuilder("# Hangar Meks\n\n");
+
+        for (Unit unit : units) {
+            if (!(unit.getEntity() instanceof Mek mek)) {
+                continue;
+            }
+
+            int currentArmor = 0;
+            int maxArmor = 0;
+            for (int loc = 0; loc < mek.locations(); loc++) {
+                currentArmor += Math.max(0, mek.getArmor(loc, false));
+                maxArmor += Math.max(0, mek.getOArmor(loc, false));
+                if (mek.hasRearArmor(loc)) {
+                    currentArmor += Math.max(0, mek.getArmor(loc, true));
+                    maxArmor += Math.max(0, mek.getOArmor(loc, true));
+                }
+            }
+
+            int jumpJets = (int) mek.getEquipment()
+                  .stream()
+                  .filter(m -> (m.getType() instanceof MiscType) && m.getType().hasFlag(MiscType.F_JUMP_JET))
+                  .count();
+
+            String quirks = unit.getQuirks()
+                                  .stream()
+                                  .map(q -> q.getDisplayableNameWithValue())
+                                  .collect(Collectors.joining(", "));
+            if (quirks.isBlank()) {
+                quirks = "None";
+            }
+
+            markdown.append("## ").append(unit.getName()).append("\n")
+                  .append("- Chassis/Model: ").append(mek.getShortNameRaw()).append("\n")
+                  .append("- Tonnage: ").append((int) mek.getWeight()).append("\n")
+                  .append("- Armor: ").append(currentArmor).append("/").append(maxArmor).append("\n")
+                  .append("- Heat Capacity: ").append(mek.getHeatCapacity()).append("\n")
+                  .append("- Jump Jets: ").append(jumpJets).append("\n")
+                  .append("- Quirks: ").append(quirks).append("\n\n")
+                  .append("### Loadout\n");
+
+            for (int loc = 0; loc < mek.locations(); loc++) {
+                String equipment = mek.getEquipment().stream()
+                                     .filter(m -> m.getLocation() == loc)
+                                     .map(this::getMountedName)
+                                     .collect(Collectors.joining(", "));
+                if (equipment.isBlank()) {
+                    equipment = "-";
+                }
+                markdown.append("- ").append(mek.getLocationName(loc)).append(": ").append(equipment).append("\n");
+            }
+            markdown.append("\n");
+        }
+
+        return markdown.toString();
+    }
+
+    private String getMountedName(Mounted<?> mounted) {
+        EquipmentType type = mounted.getType();
+        if (type == null) {
+            return mounted.getName();
+        }
+        return type.getName();
     }
 
     private @Nullable Person pickTechForMothballOrActivation(Unit unit, String description) {
@@ -1211,6 +1286,11 @@ public class UnitTableMouseAdapter extends JPopupMenuAdapter {
                 menuItem.addActionListener(this);
                 popup.add(menuItem);
             }
+
+            menuItem = new JMenuItem("Copy Meks as Markdown");
+            menuItem.setActionCommand(COMMAND_COPY_MEKS_MARKDOWN);
+            menuItem.addActionListener(this);
+            popup.add(menuItem);
 
             if (oneSelected) {
                 menuItem = new JMenuItem("Edit Unit History...");
