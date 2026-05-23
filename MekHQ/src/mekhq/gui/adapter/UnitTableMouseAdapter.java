@@ -94,7 +94,7 @@ import megamek.common.units.Infantry;
 import megamek.common.units.Mek;
 import megamek.common.units.ProtoMek;
 import megamek.common.units.Tank;
-import megamek.common.units.Mounted;
+import megamek.common.equipment.Mounted;
 import megamek.common.weapons.infantry.InfantryWeapon;
 import megamek.logging.MMLogger;
 import mekhq.MHQConstants;
@@ -793,7 +793,7 @@ public class UnitTableMouseAdapter extends JPopupMenuAdapter {
                   .append("- Chassis/Model: ").append(mek.getShortNameRaw()).append("\n")
                   .append("- Tonnage: ").append((int) mek.getWeight()).append("\n")
                   .append("- Armor: ").append(currentArmor).append("/").append(maxArmor).append("\n")
-                  .append("- Heat Sinks: ").append(mek.getHeatSinks()).append("\n")
+                  .append("- Heat Capacity: ").append(mek.getHeatCapacity()).append("\n")
                   .append("- Jump Jets: ").append(jumpJets).append("\n")
                   .append("- Quirks: ").append(quirks).append("\n\n")
                   .append("### Loadout\n");
